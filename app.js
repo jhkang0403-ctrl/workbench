@@ -69,7 +69,8 @@ const HOST_CONFIG = {
 };
 
 const KOZAK_SEQ = "GCCACC";
-const HIS6_DNA = "CACCACCACCACCACCAC";
+const HIS6_DNA = "GGATCTCATCATCATCACCATCAC";
+const HIS6_AA = "GSHHHHHH";
 const STOP_CODON = "TAA";
 const EXTRA_5 = "GCCA";
 const EXTRA_3 = "GCCA";
@@ -120,13 +121,13 @@ function stripTerminalStop(dna) {
 }
 
 function reverseTranslateDesignedProtein(proteinState) {
-  if (proteinState.config.signalStrategy === "heterologous") {
+  if (proteinState.config.host !== "Baculovirus" && proteinState.config.signalStrategy === "heterologous") {
     const sp = proteinState.config.signalPeptide;
     if (proteinState.designedProtein.startsWith(sp.aa)) {
       return `${sp.dna}${reverseTranslate(proteinState.designedProtein.slice(sp.aa.length))}`;
     }
   }
-  return reverseTranslate(proteinState.designedProtein);
+  return reverseTranslate(proteinState.targetProtein);
 }
 
 function formatSeq(seq, width = 105) {
@@ -204,17 +205,31 @@ function currentConfig() {
     signalStrategy,
     signalPeptide,
     nativeSignalAa: cleanProtein(el("nativeSignalAa").value),
+    cleavageProbability: el("cleavageProbability").value.trim(),
     nativeSignalLabel: el("nativeSignalLabel").value.trim(),
     tmStart: Number(el("tmStart").value),
     tmEnd: Number(el("tmEnd").value),
     infusionEnabled: el("infusionToggle").checked,
     forwardOverlap: cleanDna(el("forwardOverlap").value),
     reverseOverlap: cleanDna(el("reverseOverlap").value),
+    codonTool: el("codonToolSelect").value,
+    hostOrganism: el("hostOrganismSelect").value,
+    accession: el("accessionInput").value.trim(),
+    purpose: el("purposeInput").value.trim(),
+    notes: el("notesInput").value.trim(),
   };
+}
+
+function vectorEncodedSignalPeptide(config) {
+  if (config.host !== "Baculovirus") return null;
+  if (config.vector.includes("(HM)")) return HOST_CONFIG.Baculovirus.signalPeptides.find((sp) => sp.id === "hm");
+  if (config.vector.includes("(SP12)")) return HOST_CONFIG.Baculovirus.signalPeptides.find((sp) => sp.id === "sp12");
+  return null;
 }
 
 function designProtein(inputProtein, config) {
   let designed = inputProtein;
+  let targetProtein = inputProtein;
   const notes = [];
   let nativeMatched = false;
 
@@ -227,6 +242,7 @@ function designProtein(inputProtein, config) {
     if (nativeMatched) {
       const mature = designed.slice(config.nativeSignalAa.length);
       designed = `M${mature}`;
+      targetProtein = designed;
       notes.push("Signal peptide removed for cytosol expression");
     } else {
       notes.push("No signal peptide added: cytosol expression");
@@ -234,13 +250,28 @@ function designProtein(inputProtein, config) {
   }
 
   if (config.signalStrategy === "native") {
+    targetProtein = designed;
     notes.push(nativeMatched ? "Native signal peptide retained" : "Native signal peptide strategy selected");
   }
 
   if (config.signalStrategy === "heterologous") {
     const mature = nativeMatched ? designed.slice(config.nativeSignalAa.length) : designed.replace(/^M/, "");
     designed = `${config.signalPeptide.aa}${mature}`;
+    targetProtein = designed;
     notes.push(`${config.signalPeptide.label} signal peptide inserted`);
+  }
+
+  const vectorSp = vectorEncodedSignalPeptide(config);
+  if (config.host === "Baculovirus") {
+    const mature = nativeMatched ? inputProtein.slice(config.nativeSignalAa.length) : inputProtein.replace(/^M/, "");
+    targetProtein = `M${mature}`;
+    if (vectorSp) {
+      designed = `${vectorSp.aa}GS${mature}`;
+      notes.push(`${config.vector} vector-encoded ${vectorSp.label} signal peptide and GS linker noted; SP is excluded from insert`);
+    } else {
+      designed = targetProtein;
+      notes.push("Baculovirus insert excludes signal peptide and vector C-terminal His tag");
+    }
   }
 
   if (config.tmStart || config.tmEnd) {
@@ -249,27 +280,35 @@ function designProtein(inputProtein, config) {
     }
     const removed = designed.slice(config.tmStart - 1, config.tmEnd);
     designed = `${designed.slice(0, config.tmStart - 1)}${designed.slice(config.tmEnd)}`;
+    targetProtein = `${targetProtein.slice(0, Math.min(config.tmStart - 1, targetProtein.length))}${targetProtein.slice(Math.min(config.tmEnd, targetProtein.length))}`;
     notes.push(`TM domain removed: AA ${config.tmStart}-${config.tmEnd} (${removed})`);
   }
 
-  return { inputProtein, designedProtein: designed, notes, config };
+  return { inputProtein, designedProtein: designed, targetProtein, notes, config };
 }
 
-function buildConstruct(cdsNoStop) {
-  return `${EXTRA_5}${RESTRICTION_SITES.HindIII}${KOZAK_SEQ}${cdsNoStop}${HIS6_DNA}${STOP_CODON}${RESTRICTION_SITES.BamHI}${EXTRA_3}`;
+function buildConstruct(cdsNoStop, config) {
+  if (config.host === "Baculovirus") {
+    return `${RESTRICTION_SITES.BamHI}${cdsNoStop}${RESTRICTION_SITES.XhoI}`;
+  }
+  return `${RESTRICTION_SITES.HindIII}${KOZAK_SEQ}${cdsNoStop}${HIS6_DNA}${STOP_CODON}${RESTRICTION_SITES.BamHI}`;
 }
 
-function annotate(cdsNoStop) {
-  const parts = [
-    ["5' extra bases", EXTRA_5],
-    ["HindIII", RESTRICTION_SITES.HindIII],
-    ["Kozak", KOZAK_SEQ],
-    ["CDS", cdsNoStop],
-    ["6xHis tag", HIS6_DNA],
-    ["Stop codon", STOP_CODON],
-    ["BamHI", RESTRICTION_SITES.BamHI],
-    ["3' extra bases", EXTRA_3],
-  ];
+function annotate(cdsNoStop, config) {
+  const parts = config.host === "Baculovirus"
+    ? [
+      ["BamHI", RESTRICTION_SITES.BamHI],
+      ["Target DNA", cdsNoStop],
+      ["XhoI", RESTRICTION_SITES.XhoI],
+    ]
+    : [
+      ["HindIII", RESTRICTION_SITES.HindIII],
+      ["Kozak", KOZAK_SEQ],
+      ["SP + Target DNA", cdsNoStop],
+      [`6xHis tag (${HIS6_AA})`, HIS6_DNA],
+      ["Stop codon", STOP_CODON],
+      ["BamHI", RESTRICTION_SITES.BamHI],
+    ];
   let pos = 1;
   return parts.map(([label, seq]) => {
     const row = { label, start: pos, end: pos + seq.length - 1, seq };
@@ -282,18 +321,24 @@ function makePrimers(cdsNoStop, config) {
   const forwardAnneal = cdsNoStop.slice(0, chooseAnnealLength(cdsNoStop, false));
   const reverseAnnealCoding = cdsNoStop.slice(-chooseAnnealLength(cdsNoStop, true));
   const forwardTail = config.infusionEnabled
-    ? `${config.forwardOverlap}${KOZAK_SEQ}`
-    : `${EXTRA_5}${RESTRICTION_SITES.HindIII}${KOZAK_SEQ}`;
+    ? `${config.forwardOverlap}${config.host === "Baculovirus" ? "" : KOZAK_SEQ}`
+    : config.host === "Baculovirus"
+      ? RESTRICTION_SITES.BamHI
+      : `${RESTRICTION_SITES.HindIII}${KOZAK_SEQ}`;
   const reverseTemplate = config.infusionEnabled
-    ? `${reverseAnnealCoding}${HIS6_DNA}${STOP_CODON}`
-    : `${reverseAnnealCoding}${HIS6_DNA}${STOP_CODON}${RESTRICTION_SITES.BamHI}${EXTRA_3}`;
+    ? config.host === "Baculovirus"
+      ? reverseAnnealCoding
+      : `${reverseAnnealCoding}${HIS6_DNA}${STOP_CODON}`
+    : config.host === "Baculovirus"
+      ? `${reverseAnnealCoding}${RESTRICTION_SITES.XhoI}`
+      : `${reverseAnnealCoding}${HIS6_DNA}${STOP_CODON}${RESTRICTION_SITES.BamHI}`;
   const reverseTail = config.infusionEnabled ? config.reverseOverlap : "";
   const reverseAnneal = reverseComplement(reverseAnnealCoding);
 
   return {
     mode: config.infusionEnabled ? "Infusion" : "Restriction enzyme",
     forward: {
-      name: `${config.host}_${config.vector}_${config.infusionEnabled ? "Infusion" : "HindIII"}_F`,
+      name: `${config.host}_${config.vector}_${config.infusionEnabled ? "Infusion" : config.host === "Baculovirus" ? "BamHI" : "HindIII"}_F`,
       sequence: `${forwardTail}${forwardAnneal}`,
       tail: forwardTail,
       anneal: forwardAnneal,
@@ -301,7 +346,7 @@ function makePrimers(cdsNoStop, config) {
       gc: gcPercent(forwardAnneal),
     },
     reverse: {
-      name: `${config.host}_${config.vector}_${config.infusionEnabled ? "Infusion" : "BamHI"}_R`,
+      name: `${config.host}_${config.vector}_${config.infusionEnabled ? "Infusion" : config.host === "Baculovirus" ? "XhoI" : "BamHI"}_R`,
       sequence: `${reverseTail}${reverseComplement(reverseTemplate)}`,
       tail: reverseTail || reverseComplement(reverseTemplate).slice(0, reverseComplement(reverseTemplate).length - reverseAnneal.length),
       anneal: reverseAnneal,
@@ -322,10 +367,10 @@ function finalAnalyze() {
 
   const translated = translateDna(cdsNoStop);
   const restriction = findRestrictionSites(cdsNoStop);
-  const construct = buildConstruct(cdsNoStop);
-  const parts = annotate(cdsNoStop);
+  const construct = buildConstruct(cdsNoStop, config);
+  const parts = annotate(cdsNoStop, config);
   const primers = makePrimers(cdsNoStop, config);
-  const mismatch = translated !== proteinState.designedProtein;
+  const mismatch = translated !== proteinState.targetProtein;
 
   return { ...proteinState, config, cdsNoStop, translated, restriction, construct, parts, primers, mismatch };
 }
@@ -389,15 +434,30 @@ function reportText() {
   if (!finalState) return "최종 CDS 분석 후 report가 표시됩니다.";
   const hostLabel = HOST_CONFIG[finalState.config.host].label;
   const problems = finalState.restriction.filter((row) => row.positions.length);
+  const vectorSp = vectorEncodedSignalPeptide(finalState.config);
+  const strategyLabel = {
+    none: "Cytosol",
+    native: "Native SP",
+    heterologous: "Heterologous SP",
+  }[finalState.config.signalStrategy];
   return [
     "Cloning report",
     "==============",
+    `Accession no.: ${finalState.config.accession || "-"}`,
+    `Purpose: ${finalState.config.purpose || "-"}`,
+    `Special notes: ${finalState.config.notes || "-"}`,
     `Host: ${hostLabel}`,
+    `Host organism for codon optimization: ${finalState.config.hostOrganism}`,
+    `Codon optimization tool: ${finalState.config.codonTool === "thermofisher" ? "Thermo Fisher" : "VectorBuilder"}`,
     `Transfer vector: ${finalState.config.vector}`,
-    `Signal peptide strategy: ${finalState.config.signalStrategy}`,
+    `Signal peptide strategy: ${strategyLabel}`,
+    `Native SP label: ${finalState.config.nativeSignalLabel || "-"}`,
+    `SignalP cleavage site probability: ${finalState.config.cleavageProbability || "-"}`,
+    `Selected/vector SP: ${vectorSp ? `${vectorSp.label} (${vectorSp.aa}) - vector encoded; GS linker after SP` : finalState.config.signalStrategy === "heterologous" ? `${finalState.config.signalPeptide.label} (${finalState.config.signalPeptide.aa})` : "-"}`,
+    `C-terminal tag: ${finalState.config.host === "Baculovirus" ? "vector-encoded C-term His tag; excluded from insert" : `${HIS6_AA} (${HIS6_DNA})`}`,
     `Design notes: ${finalState.notes.join(" / ") || "none"}`,
     `Designed protein length: ${finalState.designedProtein.length} aa`,
-    `Final CDS length: ${finalState.cdsNoStop.length} bp`,
+    `Final CDS/target DNA length: ${finalState.cdsNoStop.length} bp`,
     `Cloning construct length: ${finalState.construct.length} bp`,
     `Restriction sites: ${problems.length ? problems.map((row) => `${row.enzyme} at ${row.positions.join(",")}`).join("; ") : "none detected in final CDS"}`,
     `Translation check: ${finalState.mismatch ? "warning - optimized DNA translation differs from designed protein" : "OK"}`,
@@ -448,6 +508,19 @@ function syncControls() {
   el("forwardOverlap").placeholder = `${config.vector} forward overlap sequence`;
   el("reverseOverlap").placeholder = `${config.vector} reverse overlap sequence`;
   setStatus(el("systemStatus"), `${hostLabel} / ${config.vector}`, "neutral");
+}
+
+function syncHostOrganismToHost() {
+  const host = el("hostSelect").value;
+  if (host === "HEK") el("hostOrganismSelect").value = "Homo sapiens";
+  if (host === "CHO") el("hostOrganismSelect").value = "Cricetulus griseus";
+  if (host === "Baculovirus") el("hostOrganismSelect").value = "Spodoptera frugiperda";
+}
+
+function syncSignalSelectionToVector() {
+  const vector = el("vectorSelect").value;
+  if (vector.includes("(HM)")) el("signalPeptideSelect").value = "hm";
+  if (vector.includes("(SP12)")) el("signalPeptideSelect").value = "sp12";
 }
 
 function prepareProtein() {
@@ -513,14 +586,21 @@ function resetApp() {
 document.addEventListener("DOMContentLoaded", () => {
   populateVectorOptions();
   populateSignalPeptideOptions();
+  syncHostOrganismToHost();
   syncControls();
 
   el("hostSelect").addEventListener("change", () => {
     populateVectorOptions();
     populateSignalPeptideOptions();
+    syncHostOrganismToHost();
+    syncSignalSelectionToVector();
     syncControls();
   });
-  ["vectorSelect", "signalStrategySelect", "signalPeptideSelect", "nativeSignalAa", "nativeSignalLabel", "tmStart", "tmEnd", "infusionToggle", "forwardOverlap", "reverseOverlap"].forEach((id) => {
+  el("vectorSelect").addEventListener("change", () => {
+    syncSignalSelectionToVector();
+    syncControls();
+  });
+  ["vectorSelect", "signalStrategySelect", "signalPeptideSelect", "nativeSignalAa", "cleavageProbability", "nativeSignalLabel", "tmStart", "tmEnd", "infusionToggle", "forwardOverlap", "reverseOverlap", "codonToolSelect", "hostOrganismSelect", "accessionInput", "purposeInput", "notesInput"].forEach((id) => {
     el(id).addEventListener("input", syncControls);
     el(id).addEventListener("change", syncControls);
   });

@@ -52,6 +52,10 @@
         <span>VectorBuilder</span>
         <small>codon optimization</small>
       </a>
+      <a class="tool-button" href="https://identity.thermofisher.com/account-center/signin-identifier.html?gig_client_id=QuibnISfymD5KJf_H8i4mnPz" target="_blank" rel="noreferrer">
+        <span>Thermo Fisher</span>
+        <small>codon optimization</small>
+      </a>
     </section>
 
     <section class="panel">
@@ -81,6 +85,10 @@
           <input id="nativeSignalAa" type="text" spellcheck="false" placeholder="예: MKWVTFISLLFLFSSAYS">
         </label>
         <label>
+          <span>Cleavage site probability</span>
+          <input id="cleavageProbability" type="text" spellcheck="false" placeholder="예: 0.934">
+        </label>
+        <label>
           <span>Native signal peptide 표기</span>
           <input id="nativeSignalLabel" type="text" spellcheck="false" placeholder="예: native SP 1-18 aa">
         </label>
@@ -90,9 +98,9 @@
         <label>
           <span>Signal peptide 전략</span>
           <select id="signalStrategySelect">
-            <option value="none">signal peptide 없음 = cytosol</option>
-            <option value="native">native signal peptide 유지</option>
-            <option value="heterologous">수율 향상용 heterologous signal peptide 도입</option>
+            <option value="none">Cytosol</option>
+            <option value="native">Native SP</option>
+            <option value="heterologous">Heterologous SP</option>
           </select>
         </label>
         <label>
@@ -129,6 +137,23 @@
         <button id="copyReverseTranslatedBtn" class="secondary-button" type="button" disabled>역번역 DNA 복사</button>
         <button id="copyDesignedProteinBtn" class="secondary-button" type="button" disabled>VectorBuilder용 AA 복사</button>
       </div>
+      <div class="config-grid">
+        <label>
+          <span>Codon optimization tool</span>
+          <select id="codonToolSelect">
+            <option value="vectorbuilder">VectorBuilder</option>
+            <option value="thermofisher">Thermo Fisher</option>
+          </select>
+        </label>
+        <label>
+          <span>Host organism</span>
+          <select id="hostOrganismSelect">
+            <option value="Homo sapiens">HEK (Homo sapiens)</option>
+            <option value="Cricetulus griseus">CHO (Cricetulus griseus)</option>
+            <option value="Spodoptera frugiperda">Baculo (Spodoptera frugiperda)</option>
+          </select>
+        </label>
+      </div>
       <pre id="reverseTranslationOutput" class="sequence-box small">DNA 서열은 한 줄에 105 bp씩 표시됩니다.</pre>
 
       <label class="wide-label">
@@ -138,6 +163,25 @@
     </section>
 
     <section class="grid">
+      <article class="panel">
+        <div class="section-title compact">
+          <h2>Report 정보</h2>
+        </div>
+        <div class="form-grid">
+          <label>
+            <span>Accession no.</span>
+            <input id="accessionInput" type="text" spellcheck="false" placeholder="예: Uniprot_P05067">
+          </label>
+          <label>
+            <span>개발 목적</span>
+            <input id="purposeInput" type="text" spellcheck="false" placeholder="예: recombinant antigen production">
+          </label>
+        </div>
+        <label class="wide-label">
+          <span>특이사항</span>
+          <textarea id="notesInput" spellcheck="false" placeholder="특이사항을 입력하세요."></textarea>
+        </label>
+      </article>
       <article class="panel">
         <div class="section-title compact">
           <h2>4. 제한효소 유무 확인</h2>
